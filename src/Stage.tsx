@@ -1,5 +1,5 @@
 import { ReactElement } from "react";
-import { StageBase, InitialData, Message } from "@chub-ai/stages-ts";
+import { StageBase, InitialData } from "@chub-ai/stages-ts";
 
 interface Stat {
   name: string;
@@ -29,7 +29,6 @@ export class Stage extends StageBase<any, any, any, any> {
       if (firstChar?.name) this.characterName = firstChar.name;
     }
 
-    // Récupère la config du joueur (le nombre de messages)
     if (data.config?.max_messages_to_analyze) {
       this.maxMessages = data.config.max_messages_to_analyze;
     }
@@ -39,8 +38,25 @@ export class Stage extends StageBase<any, any, any, any> {
     return { success: true };
   }
 
+  // Méthodes obligatoires pour StageBase
+  async setState(state: any): Promise<void> {
+    // Pour l'instant on ne fait rien de spécial
+  }
+
+  async beforePrompt(userMessage: any) {
+    return {};
+  }
+
+  async afterResponse(botMessage: any) {
+    return {};
+  }
+
+  private refresh() {
+    this.setState({});
+  }
+
   render(): ReactElement {
-    const tokenEstimate = this.maxMessages * 60; // estimation simple en français
+    const tokenEstimate = this.maxMessages * 60;
 
     return (
       <div style={{ 
@@ -79,13 +95,12 @@ export class Stage extends StageBase<any, any, any, any> {
           ))}
         </div>
 
-        {/* === BOUTON ANALYSE === */}
         <div style={{ marginTop: '24px', textAlign: 'center' }}>
           <button
             onClick={() => {
               this.analysisRequested = true;
-              this.forceUpdate(); // rafraîchit l'affichage
-              alert("✅ Analyse préparée !\n\nTape simplement un point ( . ) dans le chat et appuie sur Entrée.\nL'IA va analyser et mettre à jour les stats.");
+              this.refresh();
+              alert("✅ Analyse préparée !\n\nMaintenant tape simplement un point ( . ) dans le chat et appuie sur Entrée.");
             }}
             style={{
               backgroundColor: this.analysisRequested ? '#22c55e' : '#3b82f6',
@@ -105,12 +120,11 @@ export class Stage extends StageBase<any, any, any, any> {
           </button>
 
           <div style={{ marginTop: '12px', fontSize: '13px', opacity: 0.8 }}>
-            Analyser les <strong>{this.maxMessages}</strong> derniers messages 
-            (~{tokenEstimate} tokens estimés)
+            Analyser les <strong>{this.maxMessages}</strong> derniers messages (~{tokenEstimate} tokens estimés)
           </div>
 
           <p style={{ marginTop: '16px', fontSize: '13px', opacity: 0.6 }}>
-            Clique sur le bouton → tape un . → l’IA analyse automatiquement
+            Clique sur le bouton → tape un . → l’IA va analyser
           </p>
         </div>
       </div>

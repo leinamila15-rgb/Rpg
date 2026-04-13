@@ -49,11 +49,12 @@ export class Stage extends StageBase<any, any, any, any> {
     return (
       <div style={{
         padding: '20px',
-        background: '#0f172a',
+        backgroundColor: '#020617', // FULL OPAQUE
         borderRadius: '14px',
         color: '#e5e7eb',
         fontFamily: 'system-ui',
-        border: '1px solid #1e293b'
+        border: '1px solid #1e293b',
+        backdropFilter: 'none' // IMPORTANT
       }}>
 
         {/* HEADER */}
@@ -76,7 +77,7 @@ export class Stage extends StageBase<any, any, any, any> {
           </div>
         </div>
 
-        {/* STATS GRID */}
+        {/* STATS */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
@@ -85,7 +86,7 @@ export class Stage extends StageBase<any, any, any, any> {
         }}>
           {this.stats.map((stat, i) => (
             <div key={i} style={{
-              background: '#111827',
+              backgroundColor: '#0f172a', // OPAQUE CARD
               borderRadius: '10px',
               padding: '14px',
               border: '1px solid #1f2937'
@@ -111,7 +112,7 @@ export class Stage extends StageBase<any, any, any, any> {
 
         {/* ANALYSIS PANEL */}
         <div style={{
-          background: '#020617',
+          backgroundColor: '#020617', // OPAQUE
           borderRadius: '12px',
           padding: '16px',
           border: '1px solid #1e293b'
@@ -147,9 +148,8 @@ export class Stage extends StageBase<any, any, any, any> {
               fontSize: '15px',
               fontWeight: 600,
               cursor: 'pointer',
-              background: this.analysisRequested ? '#22c55e' : '#38bdf8',
-              color: '#020617',
-              transition: 'all 0.2s ease'
+              backgroundColor: this.analysisRequested ? '#22c55e' : '#38bdf8',
+              color: '#020617'
             }}
           >
             {this.analysisRequested

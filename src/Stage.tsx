@@ -1,164 +1,180 @@
 import { ReactElement } from "react";
-import { StageBase, InitialData } from "@chub-ai/stages-ts";
+import { StageBase, StageResponse, InitialData, Message } from "@chub-ai/stages-ts";
+import { LoadResponse } from "@chub-ai/stages-ts/dist/types/load";
+import { CharacterStatsUI } from "./CharacterStatsUI";
 
-interface Stat {
+// ✅ Interface typée et extensible
+export interface Stat {
+  id: string;
   name: string;
   value: number;
+  max?: number; // valeur max optionnelle (ex: 15/20)
 }
 
-const STATS: Stat[] = [
-  { name: 'Force', value: 10 },
-  { name: 'Agilité', value: 12 },
-  { name: 'Habileté', value: 8 },
-  { name: 'Intelligence', value: 15 },
-  { name: 'Perception', value: 14 },
+export interface CharacterData {
+  name: string;
+  stats: Stat[];
+  analysisRequested: boolean;
+  maxMessages: number;
+}
+
+type MessageStateType = CharacterData;
+type ConfigType = any;
+type InitStateType = any;
+type ChatStateType = any;
+
+// ✅ Stats par défaut séparées des données d'instance
+const DEFAULT_STATS: Stat[] = [
+  { id: '1', name: 'Force',        value: 10, max: 20 },
+  { id: '2', name: 'Agilité',      value: 12, max: 20 },
+  { id: '3', name: 'Habileté',     value: 8,  max: 20 },
+  { id: '4', name: 'Intelligence', value: 15, max: 20 },
+  { id: '5', name: 'Perception',   value: 14, max: 20 },
 ];
 
-export class Stage extends StageBase<any, any, any, any> {
+function defaultData(name = "Personnage", maxMessages = 25): CharacterData {
+  return {
+    name,
+    stats: DEFAULT_STATS.map(s => ({ ...s })),
+    analysisRequested: false,
+    maxMessages,
+  };
+}
 
-  private stats: Stat[] = STATS.map(s => ({ ...s }));
-  private characterName: string = "Personnage";
-  private analysisRequested: boolean = false;
-  private maxMessages: number = 25;
+export class Stage extends StageBase<InitStateType, ChatStateType, MessageStateType, ConfigType> {
+  private characterData: CharacterData;
+  private updateUICallback?: () => void; // ✅ Callback pour déclencher re-render React
 
-  constructor(data: InitialData<any, any, any, any>) {
+  // ✅ Storage scopé au chatId (comme Party Tracker)
+  private getChatId(): string | null {
+    const match = window.location.pathname.match(/\/chats\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  private getStorageKey(): string {
+    const chatId = this.getChatId();
+    return chatId
+      ? `character-stats-chat-${chatId}`
+      : 'character-stats-global';
+  }
+
+  constructor(data: InitialData<InitStateType, ChatStateType, MessageStateType, ConfigType>) {
     super(data);
+    const { messageState, characters, config } = data;
 
-    if (data.characters && Object.keys(data.characters).length > 0) {
-      const firstChar = Object.values(data.characters)[0];
-      if (firstChar?.name) this.characterName = firstChar.name;
-    }
+    const charName =
+      characters && Object.keys(characters).length > 0
+        ? Object.values(characters)[0]?.name || "Personnage"
+        : "Personnage";
+    const maxMessages = config?.max_messages_to_analyze ?? 25;
 
-    if (data.config?.max_messages_to_analyze) {
-      this.maxMessages = data.config.max_messages_to_analyze;
+    if (messageState?.stats) {
+      // ✅ messageState est la source la plus fiable (swipe/jump)
+      this.characterData = messageState;
+    } else {
+      // ✅ Fallback vers localStorage
+      const saved = localStorage.getItem(this.getStorageKey());
+      if (saved) {
+        try {
+          this.characterData = JSON.parse(saved);
+        } catch {
+          this.characterData = defaultData(charName, maxMessages);
+        }
+      } else {
+        this.characterData = defaultData(charName, maxMessages);
+      }
     }
   }
 
-  async load() { return { success: true }; }
-  async setState(state: any): Promise<void> {}
-  async beforePrompt(userMessage: any) { return {}; }
-  async afterResponse(botMessage: any) { return {}; }
+  async load(): Promise<Partial<LoadResponse<InitStateType, ChatStateType, MessageStateType>>> {
+    return { success: true, error: null, initState: null, chatState: null };
+  }
 
-  private refresh() {
-    this.setState({});
+  // ✅ Gère les mises à jour lors des swipes / sauts de message
+  async setState(state: MessageStateType): Promise<void> {
+    if (state?.stats) {
+      this.characterData = state;
+      try {
+        localStorage.setItem(this.getStorageKey(), JSON.stringify(this.characterData));
+      } catch (e) {
+        console.error('[CharacterStats] Échec sauvegarde localStorage:', e);
+      }
+      this.updateUICallback?.(); // ✅ Déclenche re-render React
+    }
+  }
+
+  // ✅ Injection des stats dans le prompt IA
+  async beforePrompt(
+    userMessage: Message
+  ): Promise<Partial<StageResponse<ChatStateType, MessageStateType>>> {
+    const { name, stats, analysisRequested, maxMessages } = this.characterData;
+    const parts: string[] = [];
+
+    // Injecte toujours les stats du personnage
+    if (name.trim() || stats.length > 0) {
+      let info = `[PERSONNAGE - ${name || 'Inconnu'}`;
+      const statsStr = stats
+        .filter(s => s.name.trim())
+        .map(s => (s.max !== undefined ? `${s.name}: ${s.value}/${s.max}` : `${s.name}: ${s.value}`))
+        .join(', ');
+      if (statsStr) info += `. Stats: ${statsStr}`;
+      info += ']';
+      parts.push(info);
+    }
+
+    // ✅ Directive d'analyse injectée UNE seule fois puis réinitialisée
+    if (analysisRequested) {
+      parts.push(
+        `[ANALYSE DEMANDÉE: En te basant sur les ${maxMessages} derniers messages, ` +
+        `fournis une analyse brève des performances de ${name} et propose ` +
+        `d'éventuels ajustements de statistiques. Intègre cela naturellement dans ta réponse.]`
+      );
+      // ✅ Réinitialise le flag après injection
+      this.characterData = { ...this.characterData, analysisRequested: false };
+    }
+
+    return {
+      stageDirections: parts.length > 0 ? parts.join('\n') : null,
+      messageState: this.characterData,
+      modifiedMessage: null,
+      systemMessage: null,
+      error: null,
+      chatState: null,
+    };
+  }
+
+  async afterResponse(
+    botMessage: Message
+  ): Promise<Partial<StageResponse<ChatStateType, MessageStateType>>> {
+    return {
+      stageDirections: null,
+      messageState: this.characterData,
+      modifiedMessage: null,
+      error: null,
+      systemMessage: null,
+      chatState: null,
+    };
+  }
+
+  // ✅ API publique pour l'UI
+  getCharacterData(): CharacterData {
+    return this.characterData;
+  }
+
+  updateCharacterData(newData: CharacterData): void {
+    this.characterData = newData;
+    try {
+      localStorage.setItem(this.getStorageKey(), JSON.stringify(this.characterData));
+    } catch (e) {
+      console.error('[CharacterStats] Échec sauvegarde:', e);
+    }
+  }
+
+  setUpdateCallback(callback: () => void): void {
+    this.updateUICallback = callback;
   }
 
   render(): ReactElement {
-    const tokenEstimate = this.maxMessages * 60;
-
-    return (
-      <div style={{
-        padding: '20px',
-        backgroundColor: '#020617', // FULL OPAQUE
-        borderRadius: '14px',
-        color: '#e5e7eb',
-        fontFamily: 'system-ui',
-        border: '1px solid #1e293b',
-        backdropFilter: 'none' // IMPORTANT
-      }}>
-
-        {/* HEADER */}
-        <div style={{ marginBottom: '20px' }}>
-          <h2 style={{
-            margin: 0,
-            fontSize: '22px',
-            fontWeight: 600,
-            color: '#f8fafc'
-          }}>
-            {this.characterName}
-          </h2>
-
-          <div style={{
-            fontSize: '13px',
-            opacity: 0.7,
-            marginTop: '4px'
-          }}>
-            Statistiques du personnage
-          </div>
-        </div>
-
-        {/* STATS */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-          gap: '12px',
-          marginBottom: '24px'
-        }}>
-          {this.stats.map((stat, i) => (
-            <div key={i} style={{
-              backgroundColor: '#0f172a', // OPAQUE CARD
-              borderRadius: '10px',
-              padding: '14px',
-              border: '1px solid #1f2937'
-            }}>
-              <div style={{
-                fontSize: '12px',
-                opacity: 0.6,
-                marginBottom: '6px'
-              }}>
-                {stat.name}
-              </div>
-
-              <div style={{
-                fontSize: '26px',
-                fontWeight: 700,
-                color: '#38bdf8'
-              }}>
-                {stat.value}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* ANALYSIS PANEL */}
-        <div style={{
-          backgroundColor: '#020617', // OPAQUE
-          borderRadius: '12px',
-          padding: '16px',
-          border: '1px solid #1e293b'
-        }}>
-
-          <div style={{
-            fontSize: '14px',
-            marginBottom: '10px',
-            fontWeight: 500
-          }}>
-            Analyse
-          </div>
-
-          <div style={{
-            fontSize: '13px',
-            opacity: 0.7,
-            marginBottom: '16px'
-          }}>
-            Analyse basée sur les {this.maxMessages} derniers messages (~{tokenEstimate} tokens)
-          </div>
-
-          <button
-            onClick={() => {
-              this.analysisRequested = true;
-              this.refresh();
-              alert("✅ Analyse prête !\nTape '.' dans le chat.");
-            }}
-            style={{
-              width: '100%',
-              padding: '14px',
-              borderRadius: '10px',
-              border: 'none',
-              fontSize: '15px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              backgroundColor: this.analysisRequested ? '#22c55e' : '#38bdf8',
-              color: '#020617'
-            }}
-          >
-            {this.analysisRequested
-              ? "✅ Analyse prête"
-              : "🔍 Lancer l'analyse"}
-          </button>
-        </div>
-
-      </div>
-    );
+    return <CharacterStatsUI stage={this} />;
   }
 }

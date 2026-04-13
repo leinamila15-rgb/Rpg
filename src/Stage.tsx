@@ -1,178 +1,230 @@
 import { ReactElement } from "react";
-import { StageBase, StageResponse, InitialData, Message } from "@chub-ai/stages-ts";
+import { StageBase, InitialData, Message, StageResponse } from "@chub-ai/stages-ts";
 import { LoadResponse } from "@chub-ai/stages-ts/dist/types/load";
 import { CharacterStatsUI } from "./CharacterStatsUI";
 
-// ✅ Interface typée et extensible
+// ─── Interfaces exportées ────────────────────────────────────────────────────
+
 export interface Stat {
-  id: string;
   name: string;
   value: number;
-  max?: number; // valeur max optionnelle (ex: 15/20)
 }
 
 export interface CharacterData {
-  name: string;
   stats: Stat[];
+  characterName: string;
   analysisRequested: boolean;
-  maxMessages: number;
 }
 
-type MessageStateType = CharacterData;
-type ConfigType = any;
-type InitStateType = any;
-type ChatStateType = any;
+// ─── Types internes ──────────────────────────────────────────────────────────
 
-// ✅ Stats par défaut séparées des données d'instance
+type MessageState = CharacterData;
+
+type ConfigType = {
+  max_messages_to_analyze?: number;
+};
+
+// ─── Stats par défaut ────────────────────────────────────────────────────────
+
 const DEFAULT_STATS: Stat[] = [
-  { id: '1', name: 'Force',        value: 10, max: 20 },
-  { id: '2', name: 'Agilité',      value: 12, max: 20 },
-  { id: '3', name: 'Habileté',     value: 8,  max: 20 },
-  { id: '4', name: 'Intelligence', value: 15, max: 20 },
-  { id: '5', name: 'Perception',   value: 14, max: 20 },
+  { name: 'Force',        value: 10 },
+  { name: 'Agilité',      value: 12 },
+  { name: 'Habileté',     value: 8  },
+  { name: 'Intelligence', value: 15 },
+  { name: 'Perception',   value: 14 },
 ];
 
-function defaultData(name = "Personnage", maxMessages = 25): CharacterData {
-  return {
-    name,
-    stats: DEFAULT_STATS.map(s => ({ ...s })),
-    analysisRequested: false,
-    maxMessages,
-  };
-}
+// ─── Classe principale Stage ─────────────────────────────────────────────────
 
-export class Stage extends StageBase<InitStateType, ChatStateType, MessageStateType, ConfigType> {
-  private characterData: CharacterData;
-  private updateUICallback?: () => void; // ✅ Callback pour déclencher re-render React
+export class Stage extends StageBase<any, any, MessageState, ConfigType> {
 
-  // ✅ Storage scopé au chatId (comme Party Tracker)
-  private getChatId(): string | null {
-    const match = window.location.pathname.match(/\/chats\/(\d+)/);
-    return match ? match[1] : null;
-  }
+  private stats: Stat[] = DEFAULT_STATS.map(s => ({ ...s }));
+  private characterName: string = "Personnage";
+  private analysisRequested: boolean = false;
+  public  maxMessages: number = 25;
+  private updateUICallback?: () => void;
 
-  private getStorageKey(): string {
-    const chatId = this.getChatId();
-    return chatId
-      ? `character-stats-chat-${chatId}`
-      : 'character-stats-global';
-  }
-
-  constructor(data: InitialData<InitStateType, ChatStateType, MessageStateType, ConfigType>) {
+  constructor(data: InitialData<any, any, MessageState, ConfigType>) {
     super(data);
-    const { messageState, characters, config } = data;
 
-    const charName =
-      characters && Object.keys(characters).length > 0
-        ? Object.values(characters)[0]?.name || "Personnage"
-        : "Personnage";
-    const maxMessages = config?.max_messages_to_analyze ?? 25;
+    // Récupère le nom du personnage depuis les données Chub
+    if (data.characters && Object.keys(data.characters).length > 0) {
+      const firstChar = Object.values(data.characters)[0] as any;
+      if (firstChar?.name) this.characterName = firstChar.name;
+    }
 
+    // Récupère la config max_messages
+    if (data.config?.max_messages_to_analyze) {
+      this.maxMessages = data.config.max_messages_to_analyze;
+    }
+
+    // Restaure l'état depuis messageState (swipes / navigation)
+    const { messageState } = data;
     if (messageState?.stats) {
-      // ✅ messageState est la source la plus fiable (swipe/jump)
-      this.characterData = messageState;
-    } else {
-      // ✅ Fallback vers localStorage
-      const saved = localStorage.getItem(this.getStorageKey());
-      if (saved) {
-        try {
-          this.characterData = JSON.parse(saved);
-        } catch {
-          this.characterData = defaultData(charName, maxMessages);
-        }
-      } else {
-        this.characterData = defaultData(charName, maxMessages);
-      }
+      this.stats            = messageState.stats;
+      this.characterName    = messageState.characterName    ?? this.characterName;
+      this.analysisRequested = messageState.analysisRequested ?? false;
     }
   }
 
-  async load(): Promise<Partial<LoadResponse<InitStateType, ChatStateType, MessageStateType>>> {
-    return { success: true, error: null, initState: null, chatState: null };
+  // ── Chargement initial ─────────────────────────────────────────────────────
+
+  async load(): Promise<Partial<LoadResponse<any, any, MessageState>>> {
+    return { success: true };
   }
 
-  // ✅ Gère les mises à jour lors des swipes / sauts de message
-  async setState(state: MessageStateType): Promise<void> {
+  // ── Swipes / navigation entre messages ────────────────────────────────────
+
+  async setState(state: MessageState): Promise<void> {
     if (state?.stats) {
-      this.characterData = state;
-      try {
-        localStorage.setItem(this.getStorageKey(), JSON.stringify(this.characterData));
-      } catch (e) {
-        console.error('[CharacterStats] Échec sauvegarde localStorage:', e);
-      }
-      this.updateUICallback?.(); // ✅ Déclenche re-render React
+      this.stats             = state.stats;
+      this.characterName     = state.characterName    ?? this.characterName;
+      this.analysisRequested = state.analysisRequested ?? false;
+      this.updateUICallback?.();
     }
   }
 
-  // ✅ Injection des stats dans le prompt IA
+  // ── Détecte le "." et injecte le prompt d'analyse ─────────────────────────
+
   async beforePrompt(
     userMessage: Message
-  ): Promise<Partial<StageResponse<ChatStateType, MessageStateType>>> {
-    const { name, stats, analysisRequested, maxMessages } = this.characterData;
-    const parts: string[] = [];
+  ): Promise<Partial<StageResponse<any, MessageState>>> {
 
-    // Injecte toujours les stats du personnage
-    if (name.trim() || stats.length > 0) {
-      let info = `[PERSONNAGE - ${name || 'Inconnu'}`;
-      const statsStr = stats
-        .filter(s => s.name.trim())
-        .map(s => (s.max !== undefined ? `${s.name}: ${s.value}/${s.max}` : `${s.name}: ${s.value}`))
-        .join(', ');
-      if (statsStr) info += `. Stats: ${statsStr}`;
-      info += ']';
-      parts.push(info);
-    }
+    const content = userMessage.content?.trim();
 
-    // ✅ Directive d'analyse injectée UNE seule fois puis réinitialisée
-    if (analysisRequested) {
-      parts.push(
-        `[ANALYSE DEMANDÉE: En te basant sur les ${maxMessages} derniers messages, ` +
-        `fournis une analyse brève des performances de ${name} et propose ` +
-        `d'éventuels ajustements de statistiques. Intègre cela naturellement dans ta réponse.]`
-      );
-      // ✅ Réinitialise le flag après injection
-      this.characterData = { ...this.characterData, analysisRequested: false };
+    if (content === '.') {
+      const statsNames = this.stats.map(s => s.name).join(', ');
+
+      const analysisPrompt = `[SYSTEM – STAT ANALYSER]
+Tu es un moteur d'analyse de personnage pour un jeu de rôle narratif.
+En te basant UNIQUEMENT sur l'historique de la conversation ci-dessus (les ${this.maxMessages} derniers messages), analyse les actions, comportements et capacités démontrées par ${this.characterName}.
+
+Retourne OBLIGATOIREMENT un bloc JSON valide avec exactement ce format, et rien d'autre avant ou après le bloc JSON :
+
+\`\`\`json
+{
+  "stats": [
+    { "name": "Force",        "value": <entier 1-20> },
+    { "name": "Agilité",      "value": <entier 1-20> },
+    { "name": "Habileté",     "value": <entier 1-20> },
+    { "name": "Intelligence", "value": <entier 1-20> },
+    { "name": "Perception",   "value": <entier 1-20> }
+  ],
+  "reasoning": "<explication courte en 2-3 phrases>"
+}
+\`\`\`
+
+Les stats à évaluer sont : ${statsNames}.
+Chaque valeur doit être un entier entre 1 et 20 basé sur les preuves narratives.
+Si tu n'as pas assez d'information pour une stat, garde la valeur par défaut (10).`;
+
+      this.analysisRequested = true;
+      this.updateUICallback?.();
+
+      return {
+        stageDirections: analysisPrompt,
+        messageState:    this.buildMessageState(),
+        modifiedMessage: null,
+        systemMessage:   null,
+        error:           null,
+        chatState:       null,
+      };
     }
 
     return {
-      stageDirections: parts.length > 0 ? parts.join('\n') : null,
-      messageState: this.characterData,
+      stageDirections: null,
+      messageState:    this.buildMessageState(),
       modifiedMessage: null,
-      systemMessage: null,
-      error: null,
-      chatState: null,
+      systemMessage:   null,
+      error:           null,
+      chatState:       null,
     };
   }
+
+  // ── Parse la réponse du bot et met à jour les stats ───────────────────────
 
   async afterResponse(
     botMessage: Message
-  ): Promise<Partial<StageResponse<ChatStateType, MessageStateType>>> {
+  ): Promise<Partial<StageResponse<any, MessageState>>> {
+
+    if (this.analysisRequested) {
+      const content = botMessage.content ?? '';
+
+      // Cherche un bloc ```json ... ``` ou un objet JSON brut
+      const jsonMatch =
+        content.match(/```json\s*([\s\S]*?)```/i) ??
+        content.match(/(\{[\s\S]*"stats"[\s\S]*\})/);
+
+      if (jsonMatch) {
+        try {
+          const raw    = jsonMatch[1] ?? jsonMatch[0];
+          const parsed = JSON.parse(raw.trim());
+
+          if (Array.isArray(parsed.stats)) {
+            this.stats = this.stats.map((existingStat: Stat) => {
+              const newStat = parsed.stats.find(
+                (s: Stat) => s.name.toLowerCase() === existingStat.name.toLowerCase()
+              );
+              if (newStat && typeof newStat.value === 'number') {
+                return {
+                  ...existingStat,
+                  value: Math.min(20, Math.max(1, Math.round(newStat.value))),
+                };
+              }
+              return existingStat;
+            });
+
+            this.analysisRequested = false;
+            this.updateUICallback?.();
+          }
+        } catch (e) {
+          console.error('[StatStage] Échec du parsing JSON:', e);
+        }
+      }
+    }
+
     return {
       stageDirections: null,
-      messageState: this.characterData,
+      messageState:    this.buildMessageState(),
       modifiedMessage: null,
-      error: null,
-      systemMessage: null,
-      chatState: null,
+      error:           null,
+      systemMessage:   null,
+      chatState:       null,
     };
   }
 
-  // ✅ API publique pour l'UI
+  // ── Méthodes publiques pour le composant UI ────────────────────────────────
+
   getCharacterData(): CharacterData {
-    return this.characterData;
+    return {
+      stats:             this.stats,
+      characterName:     this.characterName,
+      analysisRequested: this.analysisRequested,
+    };
   }
 
-  updateCharacterData(newData: CharacterData): void {
-    this.characterData = newData;
-    try {
-      localStorage.setItem(this.getStorageKey(), JSON.stringify(this.characterData));
-    } catch (e) {
-      console.error('[CharacterStats] Échec sauvegarde:', e);
-    }
+  updateCharacterData(newData: Partial<CharacterData>): void {
+    if (newData.stats             !== undefined) this.stats             = newData.stats;
+    if (newData.characterName     !== undefined) this.characterName     = newData.characterName;
+    if (newData.analysisRequested !== undefined) this.analysisRequested = newData.analysisRequested;
+    this.updateUICallback?.();
   }
 
   setUpdateCallback(callback: () => void): void {
     this.updateUICallback = callback;
   }
+
+  // ── Helpers privés ─────────────────────────────────────────────────────────
+
+  private buildMessageState(): MessageState {
+    return {
+      stats:             this.stats,
+      characterName:     this.characterName,
+      analysisRequested: this.analysisRequested,
+    };
+  }
+
+  // ── Rendu React ────────────────────────────────────────────────────────────
 
   render(): ReactElement {
     return <CharacterStatsUI stage={this} />;

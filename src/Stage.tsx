@@ -6,7 +6,7 @@ interface Stat {
   value: number;
 }
 
-const STATS = [
+const STATS: Stat[] = [
   { name: 'Force', value: 10 },
   { name: 'Agilité', value: 12 },
   { name: 'Habileté', value: 8 },
@@ -16,89 +16,147 @@ const STATS = [
 
 export class Stage extends StageBase<any, any, any, any> {
 
-  private stats = STATS.map(s => ({ ...s }));
-  private characterName = "Personnage";
-  private analysisRequested = false;
+  private stats: Stat[] = STATS.map(s => ({ ...s }));
+  private characterName: string = "Personnage";
+  private analysisRequested: boolean = false;
+  private maxMessages: number = 25;
 
   constructor(data: InitialData<any, any, any, any>) {
     super(data);
+
     if (data.characters && Object.keys(data.characters).length > 0) {
-      const first = Object.values(data.characters)[0];
-      if (first?.name) this.characterName = first.name;
+      const firstChar = Object.values(data.characters)[0];
+      if (firstChar?.name) this.characterName = firstChar.name;
+    }
+
+    if (data.config?.max_messages_to_analyze) {
+      this.maxMessages = data.config.max_messages_to_analyze;
     }
   }
 
   async load() { return { success: true }; }
-  async setState() {}
-  async beforePrompt() { return {}; }
-  async afterResponse() { return {}; }
+  async setState(state: any): Promise<void> {}
+  async beforePrompt(userMessage: any) { return {}; }
+  async afterResponse(botMessage: any) { return {}; }
 
   private refresh() {
     this.setState({});
   }
 
   render(): ReactElement {
+    const tokenEstimate = this.maxMessages * 60;
+
     return (
       <div style={{
-        padding: "20px",
-        backgroundColor: "#1a1a2e",        // fond très sombre et opaque
-        color: "#ffffff",
-        borderRadius: "12px",
-        border: "2px solid #334155",
-        fontFamily: "system-ui",
-        minHeight: "400px",
-        boxShadow: "0 0 20px rgba(0,0,0,0.6)"
+        padding: '20px',
+        background: '#0f172a',
+        borderRadius: '14px',
+        color: '#e5e7eb',
+        fontFamily: 'system-ui',
+        border: '1px solid #1e293b'
       }}>
 
-        <h2 style={{ textAlign: "center", marginBottom: "20px", color: "#67e8f9" }}>
-          {this.characterName}
-        </h2>
+        {/* HEADER */}
+        <div style={{ marginBottom: '20px' }}>
+          <h2 style={{
+            margin: 0,
+            fontSize: '22px',
+            fontWeight: 600,
+            color: '#f8fafc'
+          }}>
+            {this.characterName}
+          </h2>
 
-        <h3 style={{ textAlign: "center", marginBottom: "16px" }}>Statistiques</h3>
+          <div style={{
+            fontSize: '13px',
+            opacity: 0.7,
+            marginTop: '4px'
+          }}>
+            Statistiques du personnage
+          </div>
+        </div>
 
+        {/* STATS GRID */}
         <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-          gap: "12px"
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: '12px',
+          marginBottom: '24px'
         }}>
           {this.stats.map((stat, i) => (
             <div key={i} style={{
-              backgroundColor: "#16213e",
-              padding: "14px",
-              borderRadius: "8px",
-              textAlign: "center",
-              border: "1px solid #334155"
+              background: '#111827',
+              borderRadius: '10px',
+              padding: '14px',
+              border: '1px solid #1f2937'
             }}>
-              <div style={{ fontSize: "14px", opacity: 0.8 }}>{stat.name}</div>
-              <div style={{ fontSize: "32px", fontWeight: "bold", color: "#67e8f9" }}>
+              <div style={{
+                fontSize: '12px',
+                opacity: 0.6,
+                marginBottom: '6px'
+              }}>
+                {stat.name}
+              </div>
+
+              <div style={{
+                fontSize: '26px',
+                fontWeight: 700,
+                color: '#38bdf8'
+              }}>
                 {stat.value}
               </div>
             </div>
           ))}
         </div>
 
-        {/* Bouton qui doit marcher */}
-        <button
-          onClick={() => {
-            this.analysisRequested = true;
-            this.refresh();
-            alert("✅ Bouton OK !\n\nLe Stage fonctionne.\nTape un . dans le chat pour la suite.");
-          }}
-          style={{
-            marginTop: "30px",
-            width: "100%",
-            padding: "16px",
-            fontSize: "17px",
-            fontWeight: "bold",
-            backgroundColor: this.analysisRequested ? "#22c55e" : "#3b82f6",
-            color: "white",
-            border: "none",
-            borderRadius: "10px",
-            cursor: "pointer"
-          }}
-        >
-          {this.analysisRequested ? "✅ Analyse préparée" : "🔍 Analyser les stats"}
-        </button>
+        {/* ANALYSIS PANEL */}
+        <div style={{
+          background: '#020617',
+          borderRadius: '12px',
+          padding: '16px',
+          border: '1px solid #1e293b'
+        }}>
+
+          <div style={{
+            fontSize: '14px',
+            marginBottom: '10px',
+            fontWeight: 500
+          }}>
+            Analyse
+          </div>
+
+          <div style={{
+            fontSize: '13px',
+            opacity: 0.7,
+            marginBottom: '16px'
+          }}>
+            Analyse basée sur les {this.maxMessages} derniers messages (~{tokenEstimate} tokens)
+          </div>
+
+          <button
+            onClick={() => {
+              this.analysisRequested = true;
+              this.refresh();
+              alert("✅ Analyse prête !\nTape '.' dans le chat.");
+            }}
+            style={{
+              width: '100%',
+              padding: '14px',
+              borderRadius: '10px',
+              border: 'none',
+              fontSize: '15px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              background: this.analysisRequested ? '#22c55e' : '#38bdf8',
+              color: '#020617',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            {this.analysisRequested
+              ? "✅ Analyse prête"
+              : "🔍 Lancer l'analyse"}
+          </button>
+        </div>
 
       </div>
     );
